@@ -146,8 +146,15 @@ export default function Home() {
               <div className="match" key={m.id}>
                 <div className="meta">
                   <span>{m.group_name || m.stage?.replaceAll('_', ' ') || ''}</span>
-                  <span className={live ? 'live' : ''}>
-                    {STATUS_TR[m.status] || ''} {!started && fmtTime(m.utc_date)}
+                  <span className={live || (started && !finished) ? 'live' : ''}>
+                    {(() => {
+                      if (!started) return fmtTime(m.utc_date);
+                      if (finished) return 'Bitti';
+                      if (m.status === 'PAUSED') return 'Devre arası';
+                      const dk = Math.floor((now - new Date(m.utc_date).getTime()) / 60000);
+                      if (dk <= 130) return `Başladı · ~${Math.min(dk, 90)}'`;
+                      return 'Bitmek üzere';
+                    })()}
                   </span>
                 </div>
 
