@@ -4,8 +4,19 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 
+// Puanlama: tam skor 4 • doğru galibiyet 3 • doğru beraberlik 2 • yanlış 0
+function calcPoints(hp, ap, hs, as) {
+  if (hs == null || as == null) return null;
+  if (hp === hs && ap === as) return 4;
+  const pred = Math.sign(hp - ap);
+  const real = Math.sign(hs - as);
+  if (pred === real) return real === 0 ? 2 : 3;
+  return 0;
+}
+
 export default function TabloPage() {
   const [rows, setRows] = useState(null);
+  const [hasLive, setHasLive] = useState(false);
   const [myId, setMyId] = useState(null);
   const router = useRouter();
 
@@ -15,26 +26,62 @@ export default function TabloPage() {
       if (!session) { router.push('/giris'); return; }
       setMyId(session.user.id);
 
-      const [{ data: profiles }, { data: preds }] = await Promise.all([
-        supabase.from('profiles').select('id, username'),
-        supabase.from('predictions').select('user_id, points').not('points', 'is', null)
-      ]);
+      // Canlı skorları tazele (10 dk'da bir gerçekten çalışır)
+      fetch('/api/sync').catch(() => {});
+
+      const [{ data: profiles }, { data: preds }, { data: matches }] =
+        await Promise.all([
+          supabase.from('profiles').select('id, username'),
+          supabase.from('predictions')
+            .select('user_id, match_id, home_pred, away_pred, points'),
+          supabase.from('matches')
+            .select('id, status, home_score, away_score, utc_date')
+        ]);
+
+      const matchById = Object.fromEntries((matches || []).map((m) => [m.id, m]));
 
       const stats = {};
       for (const pr of profiles || []) {
-        stats[pr.id] = { id: pr.id, username: pr.username, total: 0, exact: 0, win: 0, draw: 0, played: 0 };
+        stats[pr.id] = {
+          id: pr.id, username: pr.username,
+          total: 0, live: 0, exact: 0, win: 0, draw: 0, played: 0
+        };
       }
+
+      let anyLive = false;
       for (const p of preds || []) {
         const s = stats[p.user_id];
-        if (!s) continue;
-        s.total += p.points;
-        s.played += 1;
-        if (p.points === 4) s.exact += 1;
-        else if (p.points === 3) s.win += 1;
-        else if (p.points === 2) s.draw += 1;
+        const m = matchById[p.match_id];
+        if (!s || !m) continue;
+
+        if (m.status === 'FINISHED' && p.points != null) {
+          // Kesin puan
+          s.total += p.points;
+          s.played += 1;
+          if (p.points === 4) s.exact += 1;
+          else if (p.points === 3) s.win += 1;
+          else if (p.points === 2) s.draw += 1;
+        } else if (
+          (m.status === 'IN_PLAY' || m.status === 'PAUSED') &&
+          m.home_score != null && m.away_score != null
+        ) {
+          // Canlı maç: mevcut skora göre geçici puan
+          const prov = calcPoints(p.home_pred, p.away_pred, m.home_score, m.away_score);
+          if (prov != null) {
+            s.live += prov;
+            if (prov > 0) anyLive = true;
+          }
+        }
       }
+      setHasLive(anyLive || (matches || []).some(
+        (m) => m.status === 'IN_PLAY' || m.status === 'PAUSED'
+      ));
+
       const sorted = Object.values(stats).sort(
-        (a, b) => b.total - a.total || b.exact - a.exact || a.username.localeCompare(b.username)
+        (a, b) =>
+          (b.total + b.live) - (a.total + a.live) ||
+          b.exact - a.exact ||
+          a.username.localeCompare(b.username)
       );
       setRows(sorted);
     }
@@ -67,13 +114,31 @@ export default function TabloPage() {
               <td className="num">{r.exact}</td>
               <td className="num">{r.win}</td>
               <td className="num">{r.draw}</td>
-              <td className="num total">{r.total}</td>
+              <td className="num total">
+                {r.total}
+                {r.live > 0 && (
+                  <span style={{
+                    fontSize: 12, fontStyle: 'italic', fontWeight: 400,
+                    color: 'var(--amber)', opacity: 0.85, marginLeft: 6
+                  }}>
+                    +{r.live}
+                  </span>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
       <p className="pred-note" style={{ marginTop: 16 }}>
         Puanlama: tam skor 4 • doğru galibiyet 3 • doğru beraberlik 2
+        {hasLive && (
+          <>
+            <br />
+            <span style={{ fontStyle: 'italic' }}>
+              +X: canlı maçın anlık skoruna göre geçici puan — maç bitince kesinleşir.
+            </span>
+          </>
+        )}
       </p>
     </>
   );
