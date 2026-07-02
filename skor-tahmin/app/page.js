@@ -29,8 +29,9 @@ function pointsLabel(p) {
 export default function Home() {
   const [userId, setUserId] = useState(null);
   const [matches, setMatches] = useState([]);
-  const [preds, setPreds] = useState({});   // match_id -> {home_pred, away_pred, points}
-  const [drafts, setDrafts] = useState({}); // match_id -> {h, a}
+  const [preds, setPreds] = useState({});      // benim tahminlerim: match_id -> {...}
+  const [allPreds, setAllPreds] = useState({}); // herkesin tahminleri: match_id -> [{username, h, a, points}]
+  const [drafts, setDrafts] = useState({});
   const [savedFlash, setSavedFlash] = useState({});
   const [loading, setLoading] = useState(true);
   const router = useRouter();
@@ -44,14 +45,36 @@ export default function Home() {
       // Sonuçları arka planda tazele (10 dk'da bir gerçekten çalışır)
       fetch('/api/sync').catch(() => {});
 
-      const [{ data: ms }, { data: ps }] = await Promise.all([
-        supabase.from('matches').select('*').order('utc_date'),
-        supabase.from('predictions')
-          .select('match_id, home_pred, away_pred, points')
-          .eq('user_id', session.user.id)
-      ]);
+      const [{ data: ms }, { data: myPs }, { data: everyPs }, { data: profiles }] =
+        await Promise.all([
+          supabase.from('matches').select('*').order('utc_date'),
+          supabase.from('predictions')
+            .select('match_id, home_pred, away_pred, points')
+            .eq('user_id', session.user.id),
+          // RLS sayesinde: kendi tahminlerim + başlamış maçların tüm tahminleri döner
+          supabase.from('predictions')
+            .select('match_id, user_id, home_pred, away_pred, points'),
+          supabase.from('profiles').select('id, username')
+        ]);
+
       setMatches(ms || []);
-      setPreds(Object.fromEntries((ps || []).map((p) => [p.match_id, p])));
+      setPreds(Object.fromEntries((myPs || []).map((p) => [p.match_id, p])));
+
+      const names = Object.fromEntries((profiles || []).map((p) => [p.id, p.username]));
+      const grouped = {};
+      for (const p of everyPs || []) {
+        if (!grouped[p.match_id]) grouped[p.match_id] = [];
+        grouped[p.match_id].push({
+          userId: p.user_id,
+          username: names[p.user_id] || '???',
+          h: p.home_pred, a: p.away_pred, points: p.points
+        });
+      }
+      for (const list of Object.values(grouped)) {
+        list.sort((x, y) => (y.points ?? -1) - (x.points ?? -1) ||
+                            x.username.localeCompare(y.username));
+      }
+      setAllPreds(grouped);
       setLoading(false);
     }
     init();
@@ -59,7 +82,6 @@ export default function Home() {
 
   const days = useMemo(() => {
     const now = Date.now();
-    // Bitmemiş + son 24 saatte biten maçları göster
     const visible = matches.filter((m) =>
       m.status !== 'FINISHED' ||
       now - new Date(m.utc_date).getTime() < 36 * 3600 * 1000
@@ -118,6 +140,7 @@ export default function Home() {
             const hVal = d.h ?? p?.home_pred ?? '';
             const aVal = d.a ?? p?.away_pred ?? '';
             const dirty = d.h !== undefined || d.a !== undefined;
+            const others = started ? (allPreds[m.id] || []) : [];
 
             return (
               <div className="match" key={m.id}>
@@ -161,8 +184,7 @@ export default function Home() {
                 <div className="foot">
                   <span className="pred-note">
                     {started
-                      ? p ? `Tahminin: ${p.home_pred}–${p.away_pred}` : 'Tahmin girilmedi'
-                      : p && !dirty ? 'Tahmin kaydedildi' : ''}
+                      ? '' : p && !dirty ? 'Tahmin kaydedildi' : ''}
                   </span>
                   {!started && (
                     <button
@@ -173,10 +195,39 @@ export default function Home() {
                       {savedFlash[m.id] ? 'Kaydedildi ✓' : p ? 'Güncelle' : 'Kaydet'}
                     </button>
                   )}
-                  {finished && p?.points != null && (
-                    <span className={`points p${p.points}`}>{pointsLabel(p.points)}</span>
-                  )}
                 </div>
+
+                {/* Maç başlayınca herkesin tahmini */}
+                {started && (
+                  <div style={{ borderTop: '1px solid var(--line)', marginTop: 10, paddingTop: 10 }}>
+                    {others.length === 0 && (
+                      <div className="pred-note">Bu maça kimse tahmin girmemiş.</div>
+                    )}
+                    {others.map((o) => (
+                      <div key={o.userId} style={{
+                        display: 'flex', justifyContent: 'space-between',
+                        alignItems: 'center', padding: '4px 0', fontSize: 13
+                      }}>
+                        <span style={{
+                          color: o.userId === userId ? 'var(--amber)' : 'var(--chalk)',
+                          fontWeight: o.userId === userId ? 700 : 400
+                        }}>
+                          {o.username}{o.userId === userId ? ' (sen)' : ''}
+                        </span>
+                        <span style={{
+                          fontFamily: 'var(--font-display)',
+                          fontVariantNumeric: 'tabular-nums', display: 'flex',
+                          alignItems: 'center', gap: 10
+                        }}>
+                          {o.h}–{o.a}
+                          {finished && o.points != null && (
+                            <span className={`points p${o.points}`}>{pointsLabel(o.points)}</span>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })}
