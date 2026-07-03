@@ -2,14 +2,18 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
-// Puanlama: tam skor 4 • doğru galibiyet 3 • doğru beraberlik 2 • yanlış 0
+// Puanlama (Kicktipp usulü):
+// tam skor 4 • doğru gol farkı 3 • doğru sonuç 2 • yanlış 0
+// Beraberlikte: tam skor 4, farklı skorlu beraberlik 2
 function calcPoints(hp, ap, hs, as) {
   if (hs == null || as == null) return null;
-  if (hp === hs && ap === as) return 4;
+  if (hp === hs && ap === as) return 4;                 // tam skor
   const pred = Math.sign(hp - ap);
   const real = Math.sign(hs - as);
-  if (pred === real) return real === 0 ? 2 : 3;
-  return 0;
+  if (pred !== real) return 0;                          // taraf yanlış
+  if (real === 0) return 2;                             // beraberlik, farklı skor
+  if (hp - ap === hs - as) return 3;                    // doğru gol farkı
+  return 2;                                             // doğru sonuç
 }
 
 // Bonus puanları
