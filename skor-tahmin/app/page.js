@@ -29,8 +29,10 @@ function pointsLabel(p) {
 export default function Home() {
   const [userId, setUserId] = useState(null);
   const [matches, setMatches] = useState([]);
-  const [preds, setPreds] = useState({});      // benim tahminlerim: match_id -> {...}
-  const [allPreds, setAllPreds] = useState({}); // herkesin tahminleri: match_id -> [{username, h, a, points}]
+  const [preds, setPreds] = useState({});      // benim tahminlerim
+  const [allPreds, setAllPreds] = useState({}); // başlamış maçlarda herkesin tahmini
+  const [flags, setFlags] = useState({});       // match_id -> Set(user_id): kim tahmin girdi
+  const [players, setPlayers] = useState([]);   // tüm oyuncular [{id, username}]
   const [drafts, setDrafts] = useState({});
   const [savedFlash, setSavedFlash] = useState({});
   const [loading, setLoading] = useState(true);
@@ -42,25 +44,28 @@ export default function Home() {
       if (!session) { router.push('/giris'); return; }
       setUserId(session.user.id);
 
-      // Sonuçları arka planda tazele (10 dk'da bir gerçekten çalışır)
       fetch('/api/sync').catch(() => {});
 
-      const [{ data: ms }, { data: myPs }, { data: everyPs }, { data: profiles }] =
+      const [{ data: ms }, { data: myPs }, { data: everyPs }, { data: profiles }, { data: fl }] =
         await Promise.all([
           supabase.from('matches').select('*').order('utc_date'),
           supabase.from('predictions')
             .select('match_id, home_pred, away_pred, points')
             .eq('user_id', session.user.id),
-          // RLS sayesinde: kendi tahminlerim + başlamış maçların tüm tahminleri döner
           supabase.from('predictions')
             .select('match_id, user_id, home_pred, away_pred, points'),
-          supabase.from('profiles').select('id, username')
+          supabase.from('profiles').select('id, username'),
+          supabase.from('prediction_flags').select('match_id, user_id')
         ]);
 
       setMatches(ms || []);
       setPreds(Object.fromEntries((myPs || []).map((p) => [p.match_id, p])));
 
-      const names = Object.fromEntries((profiles || []).map((p) => [p.id, p.username]));
+      const sortedPlayers = (profiles || [])
+        .slice().sort((a, b) => a.username.localeCompare(b.username));
+      setPlayers(sortedPlayers);
+      const names = Object.fromEntries(sortedPlayers.map((p) => [p.id, p.username]));
+
       const grouped = {};
       for (const p of everyPs || []) {
         if (!grouped[p.match_id]) grouped[p.match_id] = [];
@@ -75,6 +80,14 @@ export default function Home() {
                             x.username.localeCompare(y.username));
       }
       setAllPreds(grouped);
+
+      const fmap = {};
+      for (const f of fl || []) {
+        if (!fmap[f.match_id]) fmap[f.match_id] = new Set();
+        fmap[f.match_id].add(f.user_id);
+      }
+      setFlags(fmap);
+
       setLoading(false);
     }
     init();
@@ -114,6 +127,12 @@ export default function Home() {
     );
     if (!error) {
       setPreds((p) => ({ ...p, [match.id]: { match_id: match.id, home_pred: h, away_pred: a, points: null } }));
+      setFlags((f) => {
+        const next = { ...f };
+        next[match.id] = new Set(next[match.id] || []);
+        next[match.id].add(userId);
+        return next;
+      });
       setSavedFlash((s) => ({ ...s, [match.id]: true }));
       setTimeout(() => setSavedFlash((s) => ({ ...s, [match.id]: false })), 2000);
     } else {
@@ -141,6 +160,7 @@ export default function Home() {
             const aVal = d.a ?? p?.away_pred ?? '';
             const dirty = d.h !== undefined || d.a !== undefined;
             const others = started ? (allPreds[m.id] || []) : [];
+            const flagged = flags[m.id] || new Set();
 
             return (
               <div className="match" key={m.id}>
@@ -190,8 +210,7 @@ export default function Home() {
 
                 <div className="foot">
                   <span className="pred-note">
-                    {started
-                      ? '' : p && !dirty ? 'Tahmin kaydedildi' : ''}
+                    {!started && p && !dirty ? 'Tahmin kaydedildi' : ''}
                   </span>
                   {!started && (
                     <button
@@ -204,7 +223,43 @@ export default function Home() {
                   )}
                 </div>
 
-                {/* Maç başlayınca herkesin tahmini */}
+                {/* Maç öncesi: kim tahmin girmiş (skorlar gizli) */}
+                {!started && players.length > 0 && (
+                  <div style={{ borderTop: '1px solid var(--line)', marginTop: 10, paddingTop: 10 }}>
+                    {players.map((pl) => {
+                      const hasPred = flagged.has(pl.id);
+                      return (
+                        <div key={pl.id} style={{
+                          display: 'flex', justifyContent: 'space-between',
+                          alignItems: 'center', padding: '4px 0', fontSize: 13
+                        }}>
+                          <span style={{
+                            color: pl.id === userId ? 'var(--amber)' : 'var(--chalk)',
+                            fontWeight: pl.id === userId ? 700 : 400,
+                            opacity: hasPred ? 1 : 0.55
+                          }}>
+                            {pl.username}{pl.id === userId ? ' (sen)' : ''}
+                          </span>
+                          {hasPred ? (
+                            <span style={{
+                              fontFamily: 'var(--font-display)',
+                              fontVariantNumeric: 'tabular-nums',
+                              color: 'var(--amber)', letterSpacing: '0.05em'
+                            }}>
+                              *–*
+                            </span>
+                          ) : (
+                            <span className="pred-note" style={{ fontStyle: 'italic' }}>
+                              girmedi
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Maç başlayınca: herkesin tahmini */}
                 {started && (
                   <div style={{ borderTop: '1px solid var(--line)', marginTop: 10, paddingTop: 10 }}>
                     {others.length === 0 && (
