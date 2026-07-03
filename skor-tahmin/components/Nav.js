@@ -34,6 +34,7 @@ export default function Nav() {
       <span className="brand">Skor Tahmin</span>
       <div className="links">
         <Link href="/" className={pathname === '/' ? 'active' : ''}>Maçlar</Link>
+        <Link href="/bonus" className={pathname === '/bonus' ? 'active' : ''}>Bonus</Link>
         <Link href="/tablo" className={pathname === '/tablo' ? 'active' : ''}>Puan Tablosu</Link>
       </div>
       <div className="spacer" />
