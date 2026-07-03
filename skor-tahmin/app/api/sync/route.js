@@ -184,6 +184,27 @@ export async function GET(req) {
     console.error('bonus scoring:', e);
   }
 
+  // ── Turnuva verileri: puan durumu, gol krallığı, kadrolar ──
+  try {
+    const H = { headers: { 'X-Auth-Token': process.env.FOOTBALL_DATA_TOKEN }, cache: 'no-store' };
+    const upserts = [];
+    const now = new Date().toISOString();
+
+    const stRes = await fetch('https://api.football-data.org/v4/competitions/WC/standings', H);
+    if (stRes.ok) upserts.push({ key: 'standings', data: (await stRes.json()).standings || [], updated_at: now });
+
+    const scRes = await fetch('https://api.football-data.org/v4/competitions/WC/scorers?limit=25', H);
+    if (scRes.ok) upserts.push({ key: 'scorers', data: (await scRes.json()).scorers || [], updated_at: now });
+
+    const tmRes = await fetch('https://api.football-data.org/v4/competitions/WC/teams', H);
+    if (tmRes.ok) upserts.push({ key: 'teams', data: (await tmRes.json()).teams || [], updated_at: now });
+
+    if (upserts.length) await admin.from('tournament_data').upsert(upserts);
+  } catch (e) {
+    // Turnuva verisi hatası maç senkronunu engellemesin
+    console.error('tournament data:', e);
+  }
+
   await admin.from('sync_state')
     .update({ last_synced_at: new Date().toISOString() }).eq('id', 1);
 
