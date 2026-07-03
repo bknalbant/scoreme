@@ -26,25 +26,29 @@ export default function TabloPage() {
       if (!session) { router.push('/giris'); return; }
       setMyId(session.user.id);
 
-      // Canlı skorları tazele (10 dk'da bir gerçekten çalışır)
       fetch('/api/sync').catch(() => {});
 
-      const [{ data: profiles }, { data: preds }, { data: matches }] =
+      const [{ data: profiles }, { data: preds }, { data: matches }, { data: bonuses }] =
         await Promise.all([
           supabase.from('profiles').select('id, username'),
           supabase.from('predictions')
             .select('user_id, match_id, home_pred, away_pred, points'),
           supabase.from('matches')
-            .select('id, status, home_score, away_score, utc_date')
+            .select('id, status, home_score, away_score, utc_date'),
+          supabase.from('bonus_predictions').select('user_id, points')
         ]);
 
       const matchById = Object.fromEntries((matches || []).map((m) => [m.id, m]));
+      const bonusById = Object.fromEntries(
+        (bonuses || []).map((b) => [b.user_id, b.points ?? 0])
+      );
 
       const stats = {};
       for (const pr of profiles || []) {
         stats[pr.id] = {
           id: pr.id, username: pr.username,
-          total: 0, live: 0, exact: 0, win: 0, draw: 0, played: 0
+          total: 0, live: 0, bonus: bonusById[pr.id] || 0,
+          exact: 0, win: 0, draw: 0, played: 0
         };
       }
 
@@ -55,7 +59,6 @@ export default function TabloPage() {
         if (!s || !m) continue;
 
         if (m.status === 'FINISHED' && p.points != null) {
-          // Kesin puan
           s.total += p.points;
           s.played += 1;
           if (p.points === 4) s.exact += 1;
@@ -65,7 +68,6 @@ export default function TabloPage() {
           (m.status === 'IN_PLAY' || m.status === 'PAUSED') &&
           m.home_score != null && m.away_score != null
         ) {
-          // Canlı maç: mevcut skora göre geçici puan
           const prov = calcPoints(p.home_pred, p.away_pred, m.home_score, m.away_score);
           if (prov != null) {
             s.live += prov;
@@ -79,7 +81,7 @@ export default function TabloPage() {
 
       const sorted = Object.values(stats).sort(
         (a, b) =>
-          (b.total + b.live) - (a.total + a.live) ||
+          (b.total + b.bonus + b.live) - (a.total + a.bonus + a.live) ||
           b.exact - a.exact ||
           a.username.localeCompare(b.username)
       );
@@ -102,6 +104,7 @@ export default function TabloPage() {
             <th className="num" title="Tam skor (+4)">Tam</th>
             <th className="num" title="Galibiyet (+3)">Gal</th>
             <th className="num" title="Beraberlik (+2)">Ber</th>
+            <th className="num" title="Bonus tahminlerden gelen puan">Bonus</th>
             <th className="num">Puan</th>
           </tr>
         </thead>
@@ -114,8 +117,9 @@ export default function TabloPage() {
               <td className="num">{r.exact}</td>
               <td className="num">{r.win}</td>
               <td className="num">{r.draw}</td>
+              <td className="num">{r.bonus}</td>
               <td className="num total">
-                {r.total}
+                {r.total + r.bonus}
                 {r.live > 0 && (
                   <span style={{
                     fontSize: 12, fontStyle: 'italic', fontWeight: 400,
@@ -130,7 +134,7 @@ export default function TabloPage() {
         </tbody>
       </table>
       <p className="pred-note" style={{ marginTop: 16 }}>
-        Puanlama: tam skor 4 • doğru galibiyet 3 • doğru beraberlik 2
+        Puanlama: tam skor 4 • doğru galibiyet 3 • doğru beraberlik 2 • Bonus: çeyrek 2, yarı 3, şampiyon 10, gol kralı 6, en golcü takım 4
         {hasLive && (
           <>
             <br />
