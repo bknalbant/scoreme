@@ -169,7 +169,7 @@ export default function Home() {
                         {m.group_name || m.stage?.replaceAll('_', ' ') || ''}
                         {!finished && (
                           
-                            href={`https://www.google.com/search?q=${encodeURIComponent(
+                            <a href={`https://www.google.com/search?q=${encodeURIComponent(
                               `${m.home_team} ${m.away_team} muhtemel ilk 11`
                             )}`}
                             target="_blank" rel="noopener noreferrer"
