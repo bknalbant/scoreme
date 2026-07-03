@@ -8,7 +8,8 @@ import { supabase } from '../lib/supabase';
 const LINKS = [
   { href: '/', label: 'Maçlar', icon: '⚽' },
   { href: '/bonus', label: 'Bonus', icon: '🏆' },
-  { href: '/tablo', label: 'Puan Tablosu', icon: '📊' }
+  { href: '/tablo', label: 'Puan Tablosu', icon: '📊' },
+  { href: '/kurallar', label: 'Oyun Kuralları', icon: '📜' }
 ];
 
 export default function Nav() {
