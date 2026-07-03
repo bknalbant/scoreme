@@ -4,14 +4,18 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 
-// Puanlama: tam skor 4 • doğru galibiyet 3 • doğru beraberlik 2 • yanlış 0
+// Puanlama (Kicktipp usulü):
+// tam skor 4 • doğru gol farkı 3 • doğru sonuç 2 • yanlış 0
+// Beraberlikte: tam skor 4, farklı skorlu beraberlik 2
 function calcPoints(hp, ap, hs, as) {
   if (hs == null || as == null) return null;
-  if (hp === hs && ap === as) return 4;
+  if (hp === hs && ap === as) return 4;                 // tam skor
   const pred = Math.sign(hp - ap);
   const real = Math.sign(hs - as);
-  if (pred === real) return real === 0 ? 2 : 3;
-  return 0;
+  if (pred !== real) return 0;                          // taraf yanlış
+  if (real === 0) return 2;                             // beraberlik, farklı skor
+  if (hp - ap === hs - as) return 3;                    // doğru gol farkı
+  return 2;                                             // doğru sonuç
 }
 
 export default function TabloPage() {
@@ -102,8 +106,8 @@ export default function TabloPage() {
             <th>Oyuncu</th>
             <th className="num">Maç</th>
             <th className="num" title="Tam skor (+4)">Tam</th>
-            <th className="num" title="Galibiyet (+3)">Gal</th>
-            <th className="num" title="Beraberlik (+2)">Ber</th>
+            <th className="num" title="Doğru gol farkı (+3)">Fark</th>
+            <th className="num" title="Doğru sonuç (+2)">Snç</th>
             <th className="num" title="Bonus tahminlerden gelen puan">Bonus</th>
             <th className="num">Puan</th>
           </tr>
@@ -134,7 +138,7 @@ export default function TabloPage() {
         </tbody>
       </table>
       <p className="pred-note" style={{ marginTop: 16 }}>
-        Puanlama: tam skor 4 • doğru galibiyet 3 • doğru beraberlik 2 • Bonus: çeyrek 2, yarı 3, şampiyon 10, gol kralı 6, en golcü takım 4
+        Puanlama: tam skor 4 • doğru gol farkı 3 • doğru sonuç 2 — detaylar Oyun Kuralları sayfasında
         {hasLive && (
           <>
             <br />
