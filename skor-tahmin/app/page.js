@@ -35,6 +35,7 @@ export default function Home() {
   const [players, setPlayers] = useState([]);   // tüm oyuncular [{id, username}]
   const [drafts, setDrafts] = useState({});
   const [savedFlash, setSavedFlash] = useState({});
+  const [h2h, setH2h] = useState({}); // match_id -> 'loading' | 'error' | {agg, list}
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
@@ -140,6 +141,22 @@ export default function Home() {
     }
   }
 
+  async function toggleH2h(m) {
+    if (h2h[m.id]) {
+      setH2h((s) => { const n = { ...s }; delete n[m.id]; return n; });
+      return;
+    }
+    setH2h((s) => ({ ...s, [m.id]: 'loading' }));
+    try {
+      const r = await fetch(`/api/h2h?match=${m.id}`);
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error();
+      setH2h((s) => ({ ...s, [m.id]: { agg: j.agg, list: j.list } }));
+    } catch {
+      setH2h((s) => ({ ...s, [m.id]: 'error' }));
+    }
+  }
+
   if (loading) return <div className="empty">Yükleniyor…</div>;
   if (!days.length) return <div className="empty">Görünürde maç yok. Sonuçlar birazdan senkronlanır.</div>;
 
@@ -177,6 +194,13 @@ export default function Home() {
                         style={{ marginLeft: 10, color: 'var(--amber)', opacity: 0.85 }}
                       >
                         Kadrolar ↗
+                      </a>
+                    )}
+                    {m.home_team !== 'Belirlenecek' && m.away_team !== 'Belirlenecek' && (
+                      <a onClick={() => toggleH2h(m)}
+                         style={{ marginLeft: 10, color: 'var(--amber)', opacity: 0.85,
+                                  cursor: 'pointer' }}>
+                        Geçmiş ⚔
                       </a>
                     )}
                   </span>
@@ -236,6 +260,44 @@ export default function Home() {
                     </button>
                   )}
                 </div>
+
+                {/* Head-to-head paneli */}
+                {h2h[m.id] && (
+                  <div style={{ borderTop: '1px solid var(--line)', marginTop: 10,
+                                paddingTop: 10, fontSize: 13 }}>
+                    {h2h[m.id] === 'loading' && (
+                      <div className="pred-note">Geçmiş karşılaşmalar yükleniyor…</div>
+                    )}
+                    {h2h[m.id] === 'error' && (
+                      <div className="pred-note">Geçmiş verisi alınamadı.</div>
+                    )}
+                    {typeof h2h[m.id] === 'object' && (
+                      <>
+                        {h2h[m.id].agg && (
+                          <div style={{ marginBottom: 6 }}>
+                            <span style={{ color: 'var(--amber)', fontWeight: 600 }}>
+                              Son {h2h[m.id].agg.matches} karşılaşma:
+                            </span>{' '}
+                            {m.home_team} {h2h[m.id].agg.homeWins}G ·{' '}
+                            {h2h[m.id].agg.draws}B · {m.away_team} {h2h[m.id].agg.awayWins}G
+                          </div>
+                        )}
+                        {(h2h[m.id].list || []).map((g, j) => (
+                          <div key={j} className="pred-note" style={{ padding: '2px 0' }}>
+                            {g.date} — {g.home} <span style={{
+                              fontFamily: 'var(--font-display)', color: 'var(--chalk)'
+                            }}>{g.hs}–{g.as}</span> {g.away}
+                          </div>
+                        ))}
+                        {(h2h[m.id].list || []).length === 0 && (
+                          <div className="pred-note">
+                            Bu iki takım yakın geçmişte karşılaşmamış.
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
 
                 {/* Maç öncesi: kim tahmin girmiş (skorlar gizli) */}
                 {!started && players.length > 0 && (
