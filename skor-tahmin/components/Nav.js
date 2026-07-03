@@ -9,6 +9,7 @@ const LINKS = [
   { href: '/', label: 'Maçlar', icon: '⚽' },
   { href: '/bonus', label: 'Bonus', icon: '🏆' },
   { href: '/tablo', label: 'Puan Tablosu', icon: '📊' },
+  { href: '/turnuva', label: 'Turnuva', icon: '🏟️' },
   { href: '/kurallar', label: 'Oyun Kuralları', icon: '📜' }
 ];
 
