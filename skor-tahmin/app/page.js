@@ -165,7 +165,20 @@ export default function Home() {
             return (
               <div className="match" key={m.id}>
                 <div className="meta">
-                  <span>{m.group_name || m.stage?.replaceAll('_', ' ') || ''}</span>
+                 <span>
+                        {m.group_name || m.stage?.replaceAll('_', ' ') || ''}
+                        {!finished && (
+                          
+                            href={`https://www.google.com/search?q=${encodeURIComponent(
+                              `${m.home_team} ${m.away_team} muhtemel ilk 11`
+                            )}`}
+                            target="_blank" rel="noopener noreferrer"
+                            style={{ marginLeft: 10, color: 'var(--amber)', opacity: 0.85 }}
+                          >
+                            Kadrolar ↗
+                          </a>
+                        )}
+                  </span>
                   <span className={live || (started && !finished) ? 'live' : ''}>
                     {(() => {
                       if (!started) return fmtTime(m.utc_date);
