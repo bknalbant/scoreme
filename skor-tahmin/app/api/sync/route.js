@@ -12,6 +12,15 @@ function calcPoints(hp, ap, hs, as) {
   return 0;
 }
 
+// Bonus puanları
+const BONUS = { qf: 2, sf: 3, champ: 10, scorer: 6, team: 4 };
+
+// İsim karşılaştırma: küçük harf + aksan temizliği
+function norm(s) {
+  return (s || '').toLowerCase().normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
+}
+
 export async function GET(req) {
   const admin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -19,7 +28,6 @@ export async function GET(req) {
     { auth: { persistSession: false } }
   );
 
-  // Zorlamalı senkron için ?secret=..., normalde 10 dakikada bir çalışır
   const force =
     new URL(req.url).searchParams.get('secret') === process.env.SYNC_SECRET;
 
@@ -32,7 +40,6 @@ export async function GET(req) {
     return Response.json({ ok: true, skipped: 'son 10 dk içinde senkronlandı' });
   }
 
-  // Dünya Kupası (WC) tüm maçları
   const res = await fetch(
     'https://api.football-data.org/v4/competitions/WC/matches',
     { headers: { 'X-Auth-Token': process.env.FOOTBALL_DATA_TOKEN }, cache: 'no-store' }
@@ -57,6 +64,7 @@ export async function GET(req) {
     away_crest: m.awayTeam?.crest || null,
     home_score: m.score?.fullTime?.home ?? null,
     away_score: m.score?.fullTime?.away ?? null,
+    winner: m.score?.winner || null,
     updated_at: new Date().toISOString()
   }));
 
@@ -65,7 +73,7 @@ export async function GET(req) {
     if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
   }
 
-  // Biten maçların tahminlerini puanla
+  // ── Maç tahminlerini puanla ──────────────────────────────
   const finished = rows.filter((r) => r.status === 'FINISHED');
   let scored = 0;
   if (finished.length) {
@@ -89,8 +97,91 @@ export async function GET(req) {
     scored = updates.length;
   }
 
+  // ── Bonus tahminleri puanla ──────────────────────────────
+  let bonusScored = 0;
+  try {
+    const teamsInStage = (stage) => {
+      const s = new Set();
+      for (const r of rows) {
+        if (r.stage === stage) {
+          if (r.home_team !== 'Belirlenecek') s.add(r.home_team);
+          if (r.away_team !== 'Belirlenecek') s.add(r.away_team);
+        }
+      }
+      return s;
+    };
+    const quarterSet = teamsInStage('QUARTER_FINALS');
+    const semiSet = teamsInStage('SEMI_FINALS');
+
+    // Şampiyon (final bitince; penaltı ihtimali için winner alanı)
+    let champion = null;
+    const finalMatch = rows.find((r) => r.stage === 'FINAL');
+    const tournamentDone = !!(finalMatch && finalMatch.status === 'FINISHED');
+    if (tournamentDone) {
+      if (finalMatch.winner === 'HOME_TEAM') champion = finalMatch.home_team;
+      else if (finalMatch.winner === 'AWAY_TEAM') champion = finalMatch.away_team;
+      else if (finalMatch.home_score > finalMatch.away_score) champion = finalMatch.home_team;
+      else if (finalMatch.away_score > finalMatch.home_score) champion = finalMatch.away_team;
+    }
+
+    // En çok gol atan takım(lar) — turnuva bitince kesinleşir
+    const topTeams = new Set();
+    if (tournamentDone) {
+      const goals = {};
+      for (const r of rows) {
+        if (r.home_score == null || r.away_score == null) continue;
+        goals[r.home_team] = (goals[r.home_team] || 0) + r.home_score;
+        goals[r.away_team] = (goals[r.away_team] || 0) + r.away_score;
+      }
+      const max = Math.max(0, ...Object.values(goals));
+      for (const [t, g] of Object.entries(goals)) if (g === max && max > 0) topTeams.add(t);
+    }
+
+    // Gol kralı/kralları — turnuva bitince football-data'dan
+    let topScorers = [];
+    if (tournamentDone) {
+      const sres = await fetch(
+        'https://api.football-data.org/v4/competitions/WC/scorers?limit=10',
+        { headers: { 'X-Auth-Token': process.env.FOOTBALL_DATA_TOKEN }, cache: 'no-store' }
+      );
+      if (sres.ok) {
+        const sdata = await sres.json();
+        const list = sdata.scorers || [];
+        if (list.length) {
+          const max = list[0].goals;
+          topScorers = list.filter((x) => x.goals === max)
+            .map((x) => x.player?.name).filter(Boolean);
+        }
+      }
+    }
+
+    const { data: bonuses } = await admin.from('bonus_predictions').select('*');
+    for (const b of bonuses || []) {
+      let pts = 0;
+      for (const t of b.quarter_finalists || []) if (quarterSet.has(t)) pts += BONUS.qf;
+      for (const t of b.semi_finalists || []) if (semiSet.has(t)) pts += BONUS.sf;
+      if (champion && b.champion === champion) pts += BONUS.champ;
+      if (tournamentDone && b.top_scoring_team && topTeams.has(b.top_scoring_team)) {
+        pts += BONUS.team;
+      }
+      if (tournamentDone && b.top_scorer && topScorers.some((n) =>
+        norm(n).includes(norm(b.top_scorer)) || norm(b.top_scorer).includes(norm(n))
+      )) {
+        pts += BONUS.scorer;
+      }
+      if (pts !== (b.points ?? 0)) {
+        await admin.from('bonus_predictions')
+          .update({ points: pts }).eq('user_id', b.user_id);
+        bonusScored++;
+      }
+    }
+  } catch (e) {
+    // Bonus puanlama hatası maç senkronunu engellemesin
+    console.error('bonus scoring:', e);
+  }
+
   await admin.from('sync_state')
     .update({ last_synced_at: new Date().toISOString() }).eq('id', 1);
 
-  return Response.json({ ok: true, matches: rows.length, scored });
+  return Response.json({ ok: true, matches: rows.length, scored, bonusScored });
 }
