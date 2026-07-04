@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabase';
+import { getActiveGroupId } from '../lib/group';
 
 const STATUS_TR = {
   IN_PLAY: 'Oynanıyor', PAUSED: 'Devre arası', FINISHED: 'Bitti',
@@ -28,6 +29,7 @@ function pointsLabel(p) {
 
 export default function Home() {
   const [userId, setUserId] = useState(null);
+  const [groupId, setGroupId] = useState(null);
   const [matches, setMatches] = useState([]);
   const [preds, setPreds] = useState({});      // benim tahminlerim
   const [allPreds, setAllPreds] = useState({}); // başlamış maçlarda herkesin tahmini
@@ -45,6 +47,10 @@ export default function Home() {
       if (!session) { router.push('/giris'); return; }
       setUserId(session.user.id);
 
+      const gid = getActiveGroupId();
+      if (!gid) { router.push('/gruplar'); return; }
+      setGroupId(gid);
+
       fetch('/api/sync').catch(() => {});
 
       const [{ data: ms }, { data: myPs }, { data: everyPs }, { data: profiles }, { data: fl }] =
@@ -52,18 +58,22 @@ export default function Home() {
           supabase.from('matches').select('*').order('utc_date'),
           supabase.from('predictions')
             .select('match_id, home_pred, away_pred, points')
-            .eq('user_id', session.user.id),
+            .eq('user_id', session.user.id).eq('group_id', gid),
           supabase.from('predictions')
-            .select('match_id, user_id, home_pred, away_pred, points'),
-          supabase.from('profiles').select('id, username'),
-          supabase.from('prediction_flags').select('match_id, user_id')
+            .select('match_id, user_id, home_pred, away_pred, points')
+            .eq('group_id', gid),
+          supabase.from('group_members')
+            .select('user_id, profiles(username)').eq('group_id', gid),
+          supabase.from('prediction_flags')
+            .select('match_id, user_id').eq('group_id', gid)
         ]);
 
       setMatches(ms || []);
       setPreds(Object.fromEntries((myPs || []).map((p) => [p.match_id, p])));
 
       const sortedPlayers = (profiles || [])
-        .slice().sort((a, b) => a.username.localeCompare(b.username));
+        .map((r) => ({ id: r.user_id, username: r.profiles?.username || '???' }))
+        .sort((a, b) => a.username.localeCompare(b.username));
       setPlayers(sortedPlayers);
       const names = Object.fromEntries(sortedPlayers.map((p) => [p.id, p.username]));
 
@@ -122,9 +132,9 @@ export default function Home() {
     if (h === '' || a === '' || h == null || a == null) return;
 
     const { error } = await supabase.from('predictions').upsert(
-      { user_id: userId, match_id: match.id, home_pred: h, away_pred: a,
-        updated_at: new Date().toISOString() },
-      { onConflict: 'user_id,match_id' }
+      { user_id: userId, group_id: groupId, match_id: match.id,
+        home_pred: h, away_pred: a, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id,match_id,group_id' }
     );
     if (!error) {
       setPreds((p) => ({ ...p, [match.id]: { match_id: match.id, home_pred: h, away_pred: a, points: null } }));
