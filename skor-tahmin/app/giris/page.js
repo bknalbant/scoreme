@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 
-export default function GirisPage() {
+function GirisInner() {
   const [mode, setMode] = useState('login'); // login | signup
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -12,6 +12,8 @@ export default function GirisPage() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const router = useRouter();
+  const params = useSearchParams();
+  const next = params.get('next') || '/gruplar';
 
   async function submit() {
     setError('');
@@ -20,23 +22,28 @@ export default function GirisPage() {
       if (mode === 'signup') {
         const clean = username.trim();
         if (clean.length < 3) throw new Error('Kullanıcı adı en az 3 karakter olmalı.');
-        const { data, error: e1 } = await supabase.auth.signUp({ email, password });
+
+        const { data: taken } = await supabase
+          .from('profiles').select('id').eq('username', clean).maybeSingle();
+        if (taken) throw new Error('Bu kullanıcı adı alınmış, başka bir tane seçin.');
+
+        const { data, error: e1 } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { username: clean } }
+        });
         if (e1) throw e1;
-        if (!data.user) throw new Error('Kayıt tamamlanamadı, tekrar deneyin.');
-        const { error: e2 } = await supabase
-          .from('profiles').insert({ id: data.user.id, username: clean });
-        if (e2) {
+        if (data.user && !data.session) {
           throw new Error(
-            e2.code === '23505'
-              ? 'Bu kullanıcı adı alınmış, başka bir tane seçin.'
-              : e2.message
+            'Hesap oluştu ama oturum açılamadı. E-posta onayı kapalı mı kontrol edin ' +
+            've giriş yapmayı deneyin.'
           );
         }
       } else {
         const { error: e } = await supabase.auth.signInWithPassword({ email, password });
         if (e) throw e;
       }
-      router.push('/');
+      router.push(next);
     } catch (err) {
       setError(err.message || 'Bir şeyler ters gitti.');
     } finally {
@@ -47,7 +54,7 @@ export default function GirisPage() {
   return (
     <div className="auth">
       <h1>{mode === 'login' ? 'Giriş yap' : 'Kayıt ol'}</h1>
-      <p className="sub">Dünya Kupası 2026 skor tahmin oyunu</p>
+      <p className="sub">Skor tahmin oyunu</p>
 
       {mode === 'signup' && (
         <>
@@ -80,5 +87,13 @@ export default function GirisPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function GirisPage() {
+  return (
+    <Suspense fallback={<div className="empty">Yükleniyor…</div>}>
+      <GirisInner />
+    </Suspense>
   );
 }
