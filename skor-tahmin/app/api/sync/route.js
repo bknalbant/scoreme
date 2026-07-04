@@ -56,6 +56,14 @@ export async function GET(req) {
   }
   const data = await res.json();
 
+  // Turnuva amblemini güncel tut (grup kartlarında görünür)
+  try {
+    if (data.competition?.emblem) {
+      await admin.from('competitions')
+        .update({ emblem: data.competition.emblem }).eq('code', 'WC');
+    }
+  } catch {}
+
   const rows = (data.matches || []).map((m) => ({
     id: m.id,
     utc_date: m.utcDate,
@@ -175,7 +183,8 @@ export async function GET(req) {
       }
       if (pts !== (b.points ?? 0)) {
         await admin.from('bonus_predictions')
-          .update({ points: pts }).eq('user_id', b.user_id);
+          .update({ points: pts })
+          .eq('user_id', b.user_id).eq('group_id', b.group_id);
         bonusScored++;
       }
     }
