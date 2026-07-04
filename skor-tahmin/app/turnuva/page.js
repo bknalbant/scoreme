@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
+import { getActiveGroupId } from '../../lib/group';
 
 const KO_STAGES = [
   ['LAST_32', 'Son 32'],
@@ -53,13 +54,17 @@ export default function TurnuvaPage() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { router.push('/giris'); return; }
 
+      const gid = getActiveGroupId();
+      if (!gid) { router.push('/gruplar'); return; }
+
       fetch('/api/sync').catch(() => {});
 
       const [{ data: ms }, { data: td }, { data: bonuses }, { data: profiles }] =
         await Promise.all([
           supabase.from('matches').select('*').order('utc_date'),
           supabase.from('tournament_data').select('key, data'),
-          supabase.from('bonus_predictions').select('user_id, top_scorer'),
+          supabase.from('bonus_predictions')
+            .select('user_id, top_scorer').eq('group_id', gid),
           supabase.from('profiles').select('id, username')
         ]);
 
