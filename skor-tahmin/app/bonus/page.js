@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
+import { getActiveGroupId } from '../../lib/group';
 
 const PTS = { qf: 2, sf: 3, champ: 10, scorer: 6, team: 4 };
 
@@ -26,6 +27,7 @@ function fmtDeadline(ts) {
 
 export default function BonusPage() {
   const [userId, setUserId] = useState(null);
+  const [groupId, setGroupId] = useState(null);
   const [teams, setTeams] = useState([]);
   const [deadline, setDeadline] = useState(null);
   const [locked, setLocked] = useState(false);
@@ -47,10 +49,14 @@ export default function BonusPage() {
       if (!session) { router.push('/giris'); return; }
       setUserId(session.user.id);
 
+      const gid = getActiveGroupId();
+      if (!gid) { router.push('/gruplar'); return; }
+      setGroupId(gid);
+
       const [{ data: ms }, { data: mine }, { data: profiles }] = await Promise.all([
         supabase.from('matches').select('stage, utc_date, home_team, away_team'),
         supabase.from('bonus_predictions').select('*')
-          .eq('user_id', session.user.id).maybeSingle(),
+          .eq('user_id', session.user.id).eq('group_id', gid).maybeSingle(),
         supabase.from('profiles').select('id, username')
       ]);
 
@@ -88,7 +94,8 @@ export default function BonusPage() {
       setNames(Object.fromEntries((profiles || []).map((p) => [p.id, p.username])));
 
       if (isLocked) {
-        const { data: all } = await supabase.from('bonus_predictions').select('*');
+        const { data: all } = await supabase.from('bonus_predictions')
+          .select('*').eq('group_id', gid);
         setOthers(all || []);
       }
       setLoading(false);
@@ -119,6 +126,7 @@ export default function BonusPage() {
     setError('');
     const { error: e } = await supabase.from('bonus_predictions').upsert({
       user_id: userId,
+      group_id: groupId,
       quarter_finalists: qf,
       semi_finalists: sf,
       champion: champ,
