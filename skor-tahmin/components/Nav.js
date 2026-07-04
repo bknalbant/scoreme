@@ -1,43 +1,63 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabase';
+import { getActiveGroupId } from '../lib/group';
 
-const LINKS = [
+const BASE_LINKS = [
+  { href: '/gruplar', label: 'Gruplarım', icon: '👥' },
+  { href: '/kurallar', label: 'Oyun Kuralları', icon: '📜' }
+];
+const GROUP_LINKS = [
   { href: '/', label: 'Maçlar', icon: '⚽' },
-  { href: '/bonus', label: 'Bonus', icon: '🏆' },
+  { href: '/bonus', label: 'Bonus', icon: '🏆', cupOnly: true },
   { href: '/tablo', label: 'Puan Tablosu', icon: '📊' },
   { href: '/turnuva', label: 'Turnuva', icon: '🏟️' },
-  { href: '/istatistik', label: 'İstatistikler', icon: '📈' },
-  { href: '/kurallar', label: 'Oyun Kuralları', icon: '📜' }
+  { href: '/istatistik', label: 'İstatistikler', icon: '📈' }
 ];
 
 export default function Nav() {
   const [username, setUsername] = useState(null);
+  const [group, setGroup] = useState(null);
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
+
+  const loadGroup = useCallback(async () => {
+    const gid = getActiveGroupId();
+    if (!gid) { setGroup(null); return; }
+    const { data } = await supabase
+      .from('groups')
+      .select('id, name, archived, competitions(name, emblem, type)')
+      .eq('id', gid).maybeSingle();
+    setGroup(data || null);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
     async function load() {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { if (mounted) setUsername(null); return; }
+      if (!session) { if (mounted) { setUsername(null); setGroup(null); } return; }
       const { data } = await supabase
         .from('profiles').select('username').eq('id', session.user.id).single();
       if (mounted) setUsername(data?.username || session.user.email);
+      loadGroup();
     }
     load();
     const { data: sub } = supabase.auth.onAuthStateChange(() => load());
-    return () => { mounted = false; sub.subscription.unsubscribe(); };
-  }, []);
+    const onGroupChange = () => loadGroup();
+    window.addEventListener('groupchange', onGroupChange);
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+      window.removeEventListener('groupchange', onGroupChange);
+    };
+  }, [loadGroup]);
 
-  // Sayfa değişince menüyü kapat
-  useEffect(() => { setOpen(false); }, [pathname]);
+  useEffect(() => { setOpen(false); loadGroup(); }, [pathname, loadGroup]);
 
-  // Escape ile kapat
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && setOpen(false);
     window.addEventListener('keydown', onKey);
@@ -49,6 +69,11 @@ export default function Nav() {
     setOpen(false);
     router.push('/giris');
   }
+
+  const isCup = group?.competitions?.type === 'CUP';
+  const links = group
+    ? [...GROUP_LINKS.filter((l) => !l.cupOnly || isCup), ...BASE_LINKS]
+    : BASE_LINKS;
 
   return (
     <>
@@ -68,7 +93,7 @@ export default function Nav() {
         .drawer .brand {
           font-family: var(--font-display), sans-serif; font-weight: 700;
           font-size: 17px; letter-spacing: .06em; text-transform: uppercase;
-          color: var(--amber); margin: 4px 6px 22px;
+          color: var(--amber); margin: 4px 6px 16px;
         }
         .drawer a.item {
           display: flex; align-items: center; gap: 12px;
@@ -90,23 +115,54 @@ export default function Nav() {
           font-size: 17px; display: flex; align-items: center; justify-content: center;
         }
         .hamburger:hover { border-color: var(--amber-dim); color: var(--amber); }
+        .group-chip {
+          display: flex; align-items: center; gap: 8px; margin: 0 2px 16px;
+          padding: 8px 10px; background: var(--pitch-3);
+          border: 1px solid var(--line); border-radius: 8px;
+        }
       `}</style>
 
-      {/* Üst bar: menü butonu + marka */}
       <nav className="nav">
         <button className="hamburger" aria-label="Menüyü aç" onClick={() => setOpen(true)}>☰</button>
         <span className="brand">Skor Tahmin</span>
+        {group && (
+          <span className="user" style={{
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            maxWidth: 180
+          }}>· {group.name}</span>
+        )}
         <div className="spacer" />
         {username && <span className="user">{username}</span>}
       </nav>
 
-      {/* Karartma */}
       <div className={`drawer-backdrop ${open ? 'show' : ''}`} onClick={() => setOpen(false)} />
 
-      {/* Sol menü */}
       <aside className={`drawer ${open ? 'show' : ''}`}>
         <span className="brand">Skor Tahmin</span>
-        {LINKS.map((l) => (
+
+        {group && (
+          <div className="group-chip">
+            {group.competitions?.emblem && (
+              <img src={group.competitions.emblem} alt=""
+                   style={{ width: 22, height: 22, objectFit: 'contain' }}
+                   onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{
+                fontSize: 13, color: 'var(--chalk)', overflow: 'hidden',
+                textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+              }}>{group.name}</div>
+              <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                {group.competitions?.name}
+              </div>
+            </div>
+            <Link href="/gruplar" style={{ fontSize: 11, color: 'var(--amber)' }}>
+              değiştir
+            </Link>
+          </div>
+        )}
+
+        {links.map((l) => (
           <Link key={l.href} href={l.href}
                 className={`item ${pathname === l.href ? 'active' : ''}`}>
             <span>{l.icon}</span> {l.label}
