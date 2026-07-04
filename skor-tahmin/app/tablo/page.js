@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
+import { getActiveGroupId } from '../../lib/group';
 
 // Puanlama (Kicktipp usulü):
 // tam skor 4 • doğru gol farkı 3 • doğru sonuç 2 • yanlış 0
@@ -29,18 +30,28 @@ export default function TabloPage() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { router.push('/giris'); return; }
       setMyId(session.user.id);
+      const gid = getActiveGroupId();
+      if (!gid) { router.push('/gruplar'); return; }
+
 
       fetch('/api/sync').catch(() => {});
 
       const [{ data: profiles }, { data: preds }, { data: matches }, { data: bonuses }] =
         await Promise.all([
-          supabase.from('profiles').select('id, username'),
+          supabase.from('group_members')
+            .select('user_id, profiles(username)').eq('group_id', gid),
           supabase.from('predictions')
-            .select('user_id, match_id, home_pred, away_pred, points'),
+            .select('user_id, match_id, home_pred, away_pred, points')
+            .eq('group_id', gid),
           supabase.from('matches')
             .select('id, status, home_score, away_score, utc_date'),
-          supabase.from('bonus_predictions').select('user_id, points')
+          supabase.from('bonus_predictions')
+            .select('user_id, points').eq('group_id', gid)
         ]);
+
+      const memberList = (profiles || []).map((r) => ({
+        id: r.user_id, username: r.profiles?.username || '???'
+      }));
 
       const matchById = Object.fromEntries((matches || []).map((m) => [m.id, m]));
       const bonusById = Object.fromEntries(
@@ -48,7 +59,7 @@ export default function TabloPage() {
       );
 
       const stats = {};
-      for (const pr of profiles || []) {
+      for (const pr of memberList) {
         stats[pr.id] = {
           id: pr.id, username: pr.username,
           total: 0, live: 0, bonus: bonusById[pr.id] || 0,
