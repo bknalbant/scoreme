@@ -56,13 +56,19 @@ export default function TurnuvaPage() {
 
       const gid = getActiveGroupId();
       if (!gid) { router.push('/gruplar'); return; }
+      const { data: grp } = await supabase.from('groups')
+        .select('competition_code').eq('id', gid).single();
+      const comp = grp?.competition_code || 'WC';
+
 
       fetch('/api/sync').catch(() => {});
 
       const [{ data: ms }, { data: td }, { data: bonuses }, { data: profiles }] =
         await Promise.all([
-          supabase.from('matches').select('*').order('utc_date'),
-          supabase.from('tournament_data').select('key, data'),
+          supabase.from('matches').select('*')
+            .eq('competition_code', comp).order('utc_date'),
+          supabase.from('tournament_data')
+            .select('key, data').eq('competition_code', comp),
           supabase.from('bonus_predictions')
             .select('user_id, top_scorer').eq('group_id', gid),
           supabase.from('profiles').select('id, username')
@@ -182,7 +188,7 @@ export default function TurnuvaPage() {
                   borderRadius: 10, padding: 12
                 }}>
                   <div className="day-header" style={{ margin: '0 0 8px' }}>
-                    {(s.group || '').replace('GROUP_', 'Grup ')}
+                    {s.group ? s.group.replace('GROUP_', 'Grup ') : 'Puan Durumu'}
                   </div>
                   <table className="standings" style={{ margin: 0 }}>
                     <thead>
