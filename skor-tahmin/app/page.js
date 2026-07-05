@@ -27,6 +27,68 @@ function pointsLabel(p) {
   return '0 puan';
 }
 
+// ── Ön analiz: form + Poisson modeli ──
+function factorial(n) { let r = 1; for (let i = 2; i <= n; i++) r *= i; return r; }
+function poisson(l, k) { return Math.exp(-l) * Math.pow(l, k) / factorial(k); }
+
+function computeAnalysis(match, matches) {
+  const finished = matches.filter((x) =>
+    x.status === 'FINISHED' && x.home_score != null && x.away_score != null);
+
+  const teamStats = (team) => {
+    const ms = finished
+      .filter((x) => x.home_team === team || x.away_team === team)
+      .sort((a, b) => new Date(b.utc_date) - new Date(a.utc_date));
+    let gf = 0, ga = 0;
+    const form = [];
+    for (const x of ms) {
+      const isHome = x.home_team === team;
+      const f = isHome ? x.home_score : x.away_score;
+      const g = isHome ? x.away_score : x.home_score;
+      gf += f; ga += g;
+      if (form.length < 5) form.push(f > g ? 'G' : f < g ? 'M' : 'B');
+    }
+    return {
+      played: ms.length,
+      avgF: ms.length ? gf / ms.length : 0,
+      avgA: ms.length ? ga / ms.length : 0,
+      form
+    };
+  };
+
+  const home = teamStats(match.home_team);
+  const away = teamStats(match.away_team);
+  if (!home.played || !away.played) return { insufficient: true, home, away };
+
+  // Turnuva geneli gol ortalaması (takım başına)
+  let tg = 0;
+  for (const x of finished) tg += x.home_score + x.away_score;
+  const leagueAvg = tg / (2 * finished.length) || 1.3;
+
+  // Beklenen gol: hücum gücü × rakibin savunma zaafı
+  const clamp = (v) => Math.max(0.2, Math.min(4, v || 0.8));
+  const lh = clamp((home.avgF * away.avgA) / leagueAvg);
+  const la = clamp((away.avgF * home.avgA) / leagueAvg);
+
+  // 0-6 gol aralığında skor olasılık matrisi
+  let pH = 0, pD = 0, pA = 0, total = 0;
+  const scores = [];
+  for (let h = 0; h <= 6; h++) {
+    for (let g = 0; g <= 6; g++) {
+      const pr = poisson(lh, h) * poisson(la, g);
+      total += pr;
+      scores.push({ h, a: g, p: pr });
+      if (h > g) pH += pr; else if (h === g) pD += pr; else pA += pr;
+    }
+  }
+  const ph = Math.round((pH / total) * 100);
+  const pd = Math.round((pD / total) * 100);
+  const top = scores.sort((x, y) => y.p - x.p).slice(0, 3)
+    .map((s) => ({ h: s.h, a: s.a, p: Math.round((s.p / total) * 100) }));
+
+  return { pH: ph, pD: pd, pA: 100 - ph - pd, top, home, away };
+}
+
 export default function Home() {
   const [userId, setUserId] = useState(null);
   const [groupId, setGroupId] = useState(null);
@@ -38,6 +100,7 @@ export default function Home() {
   const [drafts, setDrafts] = useState({});
   const [savedFlash, setSavedFlash] = useState({});
   const [h2h, setH2h] = useState({}); // match_id -> 'loading' | 'error' | {agg, list}
+  const [analysis, setAnalysis] = useState({}); // match_id -> analiz sonucu
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
@@ -172,6 +235,14 @@ export default function Home() {
     }
   }
 
+  function toggleAnaliz(m) {
+    if (analysis[m.id]) {
+      setAnalysis((s) => { const n = { ...s }; delete n[m.id]; return n; });
+      return;
+    }
+    setAnalysis((s) => ({ ...s, [m.id]: computeAnalysis(m, matches) }));
+  }
+
   if (loading) return <div className="empty">Yükleniyor…</div>;
   if (!days.length) return <div className="empty">Görünürde maç yok. Sonuçlar birazdan senkronlanır.</div>;
 
@@ -216,6 +287,14 @@ export default function Home() {
                          style={{ marginLeft: 10, color: 'var(--amber)', opacity: 0.85,
                                   cursor: 'pointer' }}>
                         Geçmiş ⚔
+                      </a>
+                    )}
+                    {!started && m.home_team !== 'Belirlenecek' &&
+                     m.away_team !== 'Belirlenecek' && (
+                      <a onClick={() => toggleAnaliz(m)}
+                         style={{ marginLeft: 10, color: 'var(--amber)', opacity: 0.85,
+                                  cursor: 'pointer' }}>
+                        Analiz 🔮
                       </a>
                     )}
                   </span>
@@ -309,6 +388,87 @@ export default function Home() {
                             Bu iki takım yakın geçmişte karşılaşmamış.
                           </div>
                         )}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Ön analiz paneli */}
+                {!started && analysis[m.id] && (
+                  <div style={{ borderTop: '1px solid var(--line)', marginTop: 10,
+                                paddingTop: 10, fontSize: 13 }}>
+                    {analysis[m.id].insufficient ? (
+                      <div className="pred-note">
+                        Analiz için yeterli veri yok — iki takımın da bu turnuvada
+                        bitmiş maçı olması gerekiyor.
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ display: 'flex', justifyContent: 'space-between',
+                                      fontSize: 12, marginBottom: 4 }}>
+                          <span style={{ color: 'var(--amber)', fontWeight: 600 }}>
+                            {m.home_team} %{analysis[m.id].pH}
+                          </span>
+                          <span className="pred-note">
+                            Beraberlik %{analysis[m.id].pD}
+                          </span>
+                          <span style={{ color: 'var(--chalk)', fontWeight: 600 }}>
+                            %{analysis[m.id].pA} {m.away_team}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', height: 8, borderRadius: 4,
+                                      overflow: 'hidden', marginBottom: 10,
+                                      border: '1px solid var(--line)' }}>
+                          <div style={{ width: `${analysis[m.id].pH}%`,
+                                        background: 'var(--amber)' }} />
+                          <div style={{ width: `${analysis[m.id].pD}%`,
+                                        background: 'var(--pitch-3)' }} />
+                          <div style={{ width: `${analysis[m.id].pA}%`,
+                                        background: 'var(--muted)' }} />
+                        </div>
+
+                        <div style={{ marginBottom: 8 }}>
+                          <span className="pred-note">En olası skorlar: </span>
+                          {analysis[m.id].top.map((s, j) => (
+                            <span key={j} style={{
+                              fontFamily: 'var(--font-display)', color: 'var(--amber)',
+                              marginRight: 12
+                            }}>
+                              {s.h}–{s.a}{' '}
+                              <span className="pred-note">%{s.p}</span>
+                            </span>
+                          ))}
+                        </div>
+
+                        {[['home', m.home_team], ['away', m.away_team]].map(([side, name]) => {
+                          const st = analysis[m.id][side];
+                          return (
+                            <div key={side} style={{ display: 'flex', alignItems: 'center',
+                                                     gap: 8, padding: '2px 0' }}>
+                              <span style={{ width: 130, overflow: 'hidden',
+                                             textOverflow: 'ellipsis',
+                                             whiteSpace: 'nowrap', fontSize: 12.5 }}>
+                                {name}
+                              </span>
+                              <span title="Son maçlar (en yeni solda)">
+                                {st.form.map((f, j) => (
+                                  <span key={j} style={{
+                                    display: 'inline-block', width: 16, textAlign: 'center',
+                                    fontFamily: 'var(--font-display)', fontSize: 11.5,
+                                    color: f === 'G' ? 'var(--amber)'
+                                         : f === 'B' ? 'var(--muted)' : 'var(--danger)'
+                                  }}>{f}</span>
+                                ))}
+                              </span>
+                              <span className="pred-note">
+                                maç başı {st.avgF.toFixed(1)} attı · {st.avgA.toFixed(1)} yedi
+                              </span>
+                            </div>
+                          );
+                        })}
+                        <div className="pred-note" style={{ marginTop: 8, fontStyle: 'italic' }}>
+                          Bu turnuvadaki sonuçlara dayalı istatistiksel tahmindir; garanti değildir. 🔮
+                        </div>
                       </>
                     )}
                   </div>
