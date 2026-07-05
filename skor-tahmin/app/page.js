@@ -50,12 +50,17 @@ export default function Home() {
       const gid = getActiveGroupId();
       if (!gid) { router.push('/gruplar'); return; }
       setGroupId(gid);
+      const { data: grp } = await supabase.from('groups')
+        .select('competition_code').eq('id', gid).single();
+      const comp = grp?.competition_code || 'WC';
+
 
       fetch('/api/sync').catch(() => {});
 
       const [{ data: ms }, { data: myPs }, { data: everyPs }, { data: profiles }, { data: fl }] =
         await Promise.all([
-          supabase.from('matches').select('*').order('utc_date'),
+          supabase.from('matches').select('*')
+            .eq('competition_code', comp).order('utc_date'),
           supabase.from('predictions')
             .select('match_id, home_pred, away_pred, points')
             .eq('user_id', session.user.id).eq('group_id', gid),
