@@ -32,6 +32,10 @@ export default function TabloPage() {
       setMyId(session.user.id);
       const gid = getActiveGroupId();
       if (!gid) { router.push('/gruplar'); return; }
+      const { data: grp } = await supabase.from('groups')
+        .select('competition_code').eq('id', gid).single();
+      const comp = grp?.competition_code || 'WC';
+
 
 
       fetch('/api/sync').catch(() => {});
@@ -44,7 +48,8 @@ export default function TabloPage() {
             .select('user_id, match_id, home_pred, away_pred, points')
             .eq('group_id', gid),
           supabase.from('matches')
-            .select('id, status, home_score, away_score, utc_date'),
+            .select('id, status, home_score, away_score, utc_date')
+            .eq('competition_code', comp),
           supabase.from('bonus_predictions')
             .select('user_id, points').eq('group_id', gid)
         ]);
