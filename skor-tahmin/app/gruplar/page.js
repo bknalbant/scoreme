@@ -145,6 +145,13 @@ export default function GruplarPage() {
                   onClick={() => copyInvite(g)}>
             {copied === g.id ? 'Kopyalandı ✓' : 'Davet linki'}
           </button>
+          <button className="save" title="Grup ayarları" style={{
+                    padding: '7px 12px', background: 'transparent',
+                    border: '1px solid var(--line)', color: 'var(--muted)'
+                  }}
+                  onClick={() => router.push(`/grup/${g.id}`)}>
+            ⚙
+          </button>
           {!g.archived && (
             <button className="save" style={{ padding: '7px 14px' }}
                     onClick={() => openGroup(g)}>
