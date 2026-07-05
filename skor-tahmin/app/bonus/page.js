@@ -52,9 +52,15 @@ export default function BonusPage() {
       const gid = getActiveGroupId();
       if (!gid) { router.push('/gruplar'); return; }
       setGroupId(gid);
+      const { data: grp } = await supabase.from('groups')
+        .select('competition_code').eq('id', gid).single();
+      const comp = grp?.competition_code || 'WC';
+
 
       const [{ data: ms }, { data: mine }, { data: profiles }] = await Promise.all([
-        supabase.from('matches').select('stage, utc_date, home_team, away_team'),
+        supabase.from('matches')
+          .select('stage, utc_date, home_team, away_team')
+          .eq('competition_code', comp),
         supabase.from('bonus_predictions').select('*')
           .eq('user_id', session.user.id).eq('group_id', gid).maybeSingle(),
         supabase.from('profiles').select('id, username')
